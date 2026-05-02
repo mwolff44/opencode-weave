@@ -1,0 +1,53 @@
+{
+  // Weave configuration for PI
+  // Place in ~/.pi/agent/weave-config.jsonc (user) or .pi/weave-config.jsonc (project)
+
+  // Example: disable specific agents
+  // "disabled_agents": ["spindle"],
+
+  // Example: disable specific hooks
+  // "disabled_hooks": ["context-window-monitor"],
+
+  // Example: hide tools from all agents
+  // "disabled_tools": ["webfetch"],
+
+  // Example: per-agent overrides
+  // "agents": {
+  //   "pattern": {
+  //     "model": "anthropic/claude-sonnet-4-20250514",
+  //     "temperature": 0.5
+  //   },
+  //   "loom": {
+  //     "prompt_append": "Always use TypeScript strict mode."
+  //   }
+  // },
+
+  // Example: domain categories
+  // "categories": {
+  //   "frontend": {
+  //     "description": "React/UI development",
+  //     "model": "anthropic/claude-sonnet-4-20250514",
+  //     "temperature": 0.3,
+  //     "patterns": ["*.tsx", "*.css", "*.html"]
+  //   },
+  //   "backend": {
+  //     "description": "Backend API development",
+  //     "model": "anthropic/claude-sonnet-4-20250514",
+  //     "temperature": 0.1
+  //   }
+  // },
+
+  // Example: custom skill directories
+  // "skill_directories": [".custom-skills"],
+
+  // Example: background task concurrency
+  // "background": {
+  //   "defaultConcurrency": 3
+  // },
+
+  // Example: experimental features
+  // "experimental": {
+  //   "context_window_warning_threshold": 0.8,
+  //   "context_window_critical_threshold": 0.95
+  // }
+}

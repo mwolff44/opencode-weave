@@ -1,0 +1,29 @@
+{
+  "name": "@opencode_weave/weave-pi",
+  "version": "0.1.0",
+  "description": "Weave — multi-agent orchestration for PI. 8 specialized agents, plan execution, parallel/chain delegation, config pipeline, hooks, skills, analytics.",
+  "author": "Weave",
+  "license": "MIT",
+  "keywords": ["pi-package", "weave", "agents", "orchestration", "multi-agent"],
+  "type": "module",
+  "main": "extensions/weave/index.ts",
+  "types": "extensions/weave/index.ts",
+  "files": [
+    "extensions/",
+    "agents/",
+    "weave-config.jsonc.example",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.72.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mwolff44/opencode-weave.git",
+    "directory": "pi"
+  },
+  "homepage": "https://github.com/mwolff44/opencode-weave#readme"
+}
