@@ -129,6 +129,49 @@ pi/
     └── spindle.md                # External researcher (read-only)
 ```
 
+## Pros & Cons of Using Weave with PI
+
+### ✅ Pros
+
+| Benefit | Why It Matters |
+|---------|----------------|
+| **Structured delegation** | Instead of one monolithic agent doing everything, tasks go to specialized agents with scoped tools and tailored prompts. A reviewer doesn't need write access; an explorer doesn't need edit tools. |
+| **Persistent plan execution** | Create a plan once, execute it across sessions. Checkbox tracking (`- [ ]` → `- [x]`), `state.json` persistence, and automatic resume on re-entry mean you can stop and restart without losing progress. |
+| **Parallel execution** | Run multiple agents concurrently (e.g., explore codebase + research docs simultaneously). Bounded concurrency prevents resource exhaustion. |
+| **Tool scoping per agent** | Read-only agents (Thread, Weft, Warp, Spindle) physically cannot modify your codebase — enforcement happens at the tool level, not just prompt instructions. |
+| **Governance hooks** | WriteGuard prevents overwriting files you haven't read. Keyword detection triggers focused mode. Verification reminders prompt post-task review. These run automatically without user discipline. |
+| **Config-driven flexibility** | Override any agent's model, tools, or prompt per-project. Disable agents you don't need. Route domains to specific models. All via JSONC — no code changes. |
+| **Per-agent skill injection** | Give Shuttle a TypeScript-strict skill without polluting the reviewer's prompt. Skills are scoped to the agents that need them. |
+| **Analytics & cost visibility** | Track which agents cost the most, which models consume the most tokens. JSONL logs make it easy to audit and optimize. |
+| **Works with any PI model** | Agents are model-agnostic. Use Claude for planning, GPT for implementation, a local model for exploration — mix and match per agent via config. |
+| **Composable pipelines** | Chain mode lets you pipe one agent's output into the next (Thread explores → Weft reviews → Shuttle implements). Build reusable workflows without code. |
+
+### ⚠️ Cons
+
+| Limitation | Why It Matters |
+|------------|----------------|
+| **Token overhead** | Each subagent is a separate `pi` child process with its own system prompt and context window. For simple tasks (single-file edits, quick questions), spawning an agent costs more tokens than doing it directly. |
+| **Latency per delegation** | Child process startup + model API call means each task has 5–15s of overhead. Parallel mode mitigates this, but chain mode is strictly sequential. |
+| **No shared context between agents** | Each subagent starts with a fresh context — it only sees what you pass in the `task` description. Agents cannot reference each other's conversation history. Chain mode's `{previous}` placeholder is the only bridge. |
+| **Soft enforcement for child processes** | WriteGuard uses PI's `{ block: true }` for the main session, but subagents run as separate `pi` processes. Tool scoping inside children relies on system prompt instructions, not hard enforcement. |
+| **Complexity cost** | 8 agents, config files, state management, hooks — Weave adds conceptual overhead. For small projects or solo developers, PI's native single-agent mode is simpler and sufficient. |
+| **State management is file-based** | `.weave/state.json` and plan files use the filesystem. No database, no locking. Concurrent PI sessions working on the same plan can conflict. |
+| **Config sprawl** | User config + project config + deep merge + agent overrides + categories + skills = many knobs to tune. The defaults work well, but customization requires understanding the full schema. |
+| **Analytics are opt-in and basic** | No built-in dashboards or trend analysis. Analytics writes JSONL files — you need external tooling (or `/token-report`) to make sense of the data. Token counts from child processes are approximate. |
+| **PI extension API limitations** | No native agent registry in PI — agents are simulated via system prompts and tool scoping. This is a design constraint, not a bug, but it means some patterns (inter-agent communication, shared memory) aren't possible. |
+
+### When to Use Weave vs. Plain PI
+
+| Scenario | Recommendation |
+|----------|---------------|
+| Quick bug fix, single file | **Plain PI** — no need for orchestration |
+| Exploring an unfamiliar codebase | **Weave** — Thread is purpose-built for this |
+| Multi-file feature with tests + docs | **Weave** — Pattern plans, Tapestry coordinates, Shuttle implements |
+| Security audit before release | **Weave** — Warp runs a focused security review |
+| Refactoring across 10+ files | **Weave** — plan tracking and checkpoint resumption shine here |
+| One-off question about a library | **Plain PI** — Spindle could help, but overhead isn't worth it |
+| Large project with mixed domains | **Weave** — category routing sends frontend/backend to different models |
+
 ## License
 
 MIT
