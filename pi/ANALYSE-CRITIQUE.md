@@ -89,3 +89,49 @@ Si je devais refactorer, je garderais :
 - La couche complète de simulation de sub-agents
 
 **En résumé** : Weave est un excellent projet d'ingénierie qui a permis de comprendre en profondeur PI et OpenCode. Mais pour un usage quotidien avec PI, la philosophie de Mario — minimalisme, visibilité, artifacts persistants, sessions séparées — est probablement la bonne.
+
+---
+
+## Références
+
+1. **Mario Zechner, « What I learned building an opinionated and minimal coding agent »**, novembre 2025
+   https://mariozechner.at/posts/2025-11-30-pi-coding-agent/
+   — Section « No sub-agents » : position de Mario sur les sub-agents, le context engineering, et l'anti-pattern du parallélisme.
+
+2. **README de PI (`@mariozechner/pi-coding-agent`)**, section « Philosophy »
+   https://github.com/badlogic/pi-mono
+   — Citation : *« No sub-agents. There's many ways to do this. Spawn pi instances via tmux, or build your own with extensions, or install a package that does it your way. »*
+   — Autres positions : No MCP, No plan mode, No permission popups, No built-in to-dos, No background bash.
+
+3. **PI Subagent Extension Example**
+   `examples/extensions/subagent/` dans `@mariozechner/pi-coding-agent`
+   — Exemple de Mario pour un système de sub-agents via extension : agents `.md` avec frontmatter, `spawn("pi --mode json")`, modes single/parallel/chain, workflow prompts (`/implement`, `/scout-and-plan`).
+
+4. **PI Extensions Documentation** (`docs/extensions.md`)
+   `@mariozechner/pi-coding-agent`
+   — Événements PI : `session_start`, `session_shutdown`, `before_agent_start`, `tool_call`, `agent_end`, `session_before_compact`, `resources_discover`.
+   — API : `pi.registerTool()`, `pi.registerCommand()`, `pi.on()`, `pi.sendUserMessage()`.
+
+5. **PI Skills Documentation** (`docs/skills.md`)
+   `@mariozechner/pi-coding-agent`
+   — Spécification Agent Skills (`agentskills.io`), progressive disclosure, discovery rules.
+
+6. **OpenCode Weave — Architecture source**
+   `src/` dans `mwolff44/opencode-weave`
+   — `src/runtime/opencode/plugin-adapter.ts` : adaptation au runtime OpenCode, hooks `tool.execute.before/after`, interception native du `task` tool.
+   — `src/agents/builtin-agents.ts` : factory des 8 agents, `AgentConfig` avec `tools: { write: false }` (hard enforcement).
+   — `src/tools/registry.ts` : gestion du `task` tool natif OpenCode.
+   — `src/managers/config-handler.ts` : pipeline de config en 6 phases.
+   — `src/features/work-state/` : `state.json`, persistance, resume/pause.
+   — `src/features/skill-loader/` : discovery multi-source, merge API + filesystem.
+   — `src/features/analytics/` : SessionTracker, JSONL, token reports.
+
+7. **OpenCode Weave — Documentation**
+   `docs/` dans `mwolff44/opencode-weave`
+   — `docs/architecture.md` : architecture globale, agents, hooks, config.
+   — `docs/agent-interactions.md` : patterns de délégation entre agents.
+   — `docs/configuration.md` : schéma JSONC complet, overrides, catégories.
+
+8. **Armin Rigo, « Agents are hard »**, novembre 2025
+   https://lucumr.pocoo.org/2025/11/21/agents-are-hard/
+   — Référencé par Mario comme reflétant son expérience avec les unifying LLM APIs et la complexité des systèmes multi-agents.
