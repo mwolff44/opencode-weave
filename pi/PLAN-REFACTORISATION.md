@@ -257,6 +257,39 @@ import { getPlanProgress } from "./plan-utils";
 export default function (pi: ExtensionAPI) {
   const config = loadConfig(process.cwd());
 
+  // ---- Template → modèle mapping ----
+  // Intercepte l'input utilisateur pour détecter les /command
+  // et suggérer le modèle approprié via un steer message.
+  pi.on("input", async (event, ctx) => {
+    const text = event.text?.trim();
+    if (!text?.startsWith("/")) return;
+    const command = text.split("/")[1]?.split(" ")[0];
+    if (!command) return;
+
+    const templateConfig = config.templates?.[command] ?? config.templates?.["*"];
+    if (templateConfig?.model) {
+      // Injecter une instruction de modèle dans le prompt
+      // PI ne supporte pas le changement de modèle programmatique par commande,
+      // mais on peut l'ajouter en tête de prompt comme instruction.
+      // Alternative : l'utilisateur utilise Ctrl+L manuellement.
+      // TODO: si PI ajoute ctx.setModel(), l'utiliser ici.
+    }
+  });
+
+  // ---- Découverte des templates utilisateur ----
+  pi.on("resources_discover", async (event, _ctx) => {
+    const dirs: string[] = [];
+    // Templates livrés avec le package
+    const pkgPrompts = path.join(__dirname, "..", "..", "prompts");
+    if (fs.existsSync(pkgPrompts)) dirs.push(pkgPrompts);
+    // Templates utilisateur depuis la config
+    for (const dir of config.custom_template_dirs ?? []) {
+      const abs = path.resolve(event.cwd, dir.replace("^~/", process.env.HOME + "/"));
+      if (fs.existsSync(abs)) dirs.push(abs);
+    }
+    return dirs.length ? { promptPaths: dirs } : {};
+  });
+
   // ---- Commande /plans ----
   pi.registerCommand("plans", {
     description: "Lister les plans Weave avec progression",
@@ -281,7 +314,6 @@ export default function (pi: ExtensionAPI) {
       const plansDir = path.join(ctx.cwd, ".weave", "plans");
       fs.mkdirSync(plansDir, { recursive: true });
 
-      // Trouver le plan
       const plans = fs.readdirSync(plansDir).filter(f => f.endsWith(".md"));
       const name = args?.trim() || plans[0]?.replace(/\.md$/, "");
       if (!name) { ctx.ui.notify("Aucun plan trouvé.", "info"); return; }
@@ -292,7 +324,6 @@ export default function (pi: ExtensionAPI) {
       const progress = getPlanProgress(planPath);
       if (progress.isComplete) { ctx.ui.notify(`Plan déjà terminé : ${name}`, "info"); return; }
 
-      // Injecter le prompt d'exécution dans la session courante
       pi.sendUserMessage(
         `Exécute le plan .weave/plans/${name}.md.\n` +
         `Progression : ${progress.completed}/${progress.total} tâches terminées.\n` +
@@ -307,11 +338,23 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("weave-config", {
     description: "Afficher la configuration Weave",
     handler: async (_args, ctx) => {
-      ctx.ui.notify(`Config chargée. Fichiers : ${config.loadedFiles.join(", ") || "(défauts)"}`, "info");
+      const lines = [`Fichiers : ${config.loadedFiles.join(", ") || "(défauts)"}`];
+      if (config.templates) {
+        lines.push("Templates :");
+        for (const [name, cfg] of Object.entries(config.templates)) {
+          lines.push(`  ${name}: model=${cfg.model || "(défaut)"}, tools=${cfg.tools?.join(",") || "(défaut)"}`);
+        }
+      }
+      if (config.agents) {
+        lines.push("Agents :");
+        for (const [name, cfg] of Object.entries(config.agents)) {
+          lines.push(`  ${name}: model=${cfg.model || "(défaut)"}`);
+        }
+      }
+      ctx.ui.notify(lines.join("\n"), "info");
     },
   });
 }
-```
 
 ### `pi/extensions/weave-lite/config/` — Fichiers conservés
 
@@ -325,16 +368,144 @@ Tout le reste :
 - `pi/extensions/weave/analytics/` — supprimé
 - `pi/extensions/weave/index.ts` — remplacé par la version lite
 
+## Phase B2 : Modèle par template + extensibilité utilisateur (~1h)
+
+**Objectif** : Permettre la configuration du modèle et des outils par template, et permettre aux utilisateurs d'ajouter leurs propres templates.
+
+### Problème
+
+PI ne supporte pas nativement la sélection de modèle par prompt template. Les templates sont du markdown plat avec seulement `description` et `argument-hint` en frontmatter.
+
+Les agents `.md` (format subagent) supportent `model` et `tools` en frontmatter, mais les templates PI ne le font pas.
+
+### Solution : config-driven model routing
+
+La config Weave mappe les noms de templates à des modèles. L'extension weave-lite lit cette config et :
+
+1. **Expose le mapping via `/weave-config`** — l'utilisateur voit quel modèle sera utilisé
+2. **`resources_discover` expose les prompt paths** — les templates du package + ceux de l'utilisateur
+3. **Documentation inline** — chaque template mentionne le modèle recommandé en commentaire
+
+### Config : section `templates`
+
+```jsonc
+{
+  "templates": {
+    "explore": { "model": "anthropic/claude-haiku-4-5", "tools": ["read","bash","grep","find","ls"] },
+    "plan": { "model": "anthropic/claude-sonnet-4" },
+    "execute": { "model": "anthropic/claude-sonnet-4" },
+    "review": { "model": "anthropic/claude-sonnet-4" },
+    "security": { "model": "anthropic/claude-sonnet-4" },
+    "research": { "model": "anthropic/claude-sonnet-4" },
+    "*": { "model": "anthropic/claude-sonnet-4" }
+  }
+}
+```
+
+Le wildcard `"*"` s'applique à tout template non listé explicitement (y compris les templates utilisateur personnalisés).
+
+### Comment l'utilisateur change le modèle
+
+PI ne permet pas le changement de modèle programmatique depuis une extension. L'utilisateur a deux options :
+
+1. **Manuellement** : Ctrl+L ou `/model` avant de lancer le template
+2. **Config** : Modifier `weave-config.jsonc` pour le template concerné
+
+L'extension affiche le modèle recommandé dans `/weave-config` pour guider l'utilisateur.
+
+### Extensibilité : templates utilisateur
+
+L'utilisateur peut ajouter ses propres templates de deux façons :
+
+**Méthode 1 — Répertoire natif PI** (recommandé) :
+```
+~/.pi/agent/prompts/mon-workflow.md    # global
+.pi/prompts/mon-workflow.md            # projet
+```
+PI les découvre automatiquement. Ils apparaissent dans l'autocomplétion `/`.
+
+**Méthode 2 — Config Weave** :
+```jsonc
+{
+  "custom_template_dirs": ["./docs/prompts", "~/.weave/prompts"]
+}
+```
+L'extension les expose via `resources_discover { promptPaths: [...] }`.
+
+**Méthode 3 — Package** :
+```
+pi/packages/mon-package/prompts/mon-workflow.md
+```
+Via le système de packages PI natif.
+
+### Format d'un template utilisateur Weave-aware
+
+Les templates utilisateur sont du markdown standard. Pour bénéficier du model routing, le nom du fichier doit matcher une entrée dans `config.templates` :
+
+```markdown
+<!-- .pi/prompts/api-endpoint.md -->
+---
+description: Crée un endpoint API REST avec validation
+argument-hint: "<resource> <method>"
+---
+Crée un endpoint API pour la ressource $1 avec la méthode $2.
+
+1. Lis la structure existante des endpoints
+2. Crée le handler dans src/api/$1.ts
+3. Ajoute la validation avec zod
+4. Ajoute les tests
+```
+
+Puis dans la config :
+```jsonc
+{
+  "templates": {
+    "api-endpoint": { "model": "anthropic/claude-sonnet-4" }
+  }
+}
+```
+
+### Modèle pour les 3 agents (subagent usage)
+
+Les agents `.md` utilisés avec l'exemple subagent de PI supportent nativement `model` et `tools` en frontmatter :
+
+```markdown
+---
+name: scout
+model: claude-haiku-4-5
+tools: read, grep, find, ls, bash
+---
+```
+
+La config Weave peut override ces valeurs :
+```jsonc
+{
+  "agents": {
+    "scout": { "model": "openai/gpt-4o-mini" },
+    "worker": { "model": "anthropic/claude-sonnet-4" },
+    "reviewer": { "model": "anthropic/claude-sonnet-4" }
+  }
+}
+```
+
+Pour appliquer l'override, l'extension doit réécrire le frontmatter de l'agent au moment du `resources_discover`, ou l'utilisateur peut éditer directement le fichier `.md`.
+
 ### Validation
 
 ```bash
-# Installer l'extension lite
-cp -r pi/extensions/weave-lite ~/.pi/agent/extensions/weave-lite
+# Vérifier que /weave-config affiche le mapping templates
+pi   # /weave-config
 
-# Tester
-pi    # /plans → liste les plans
-pi    # /start-work mon-plan → injecte le prompt d'exécution
-pi    # /weave-config → affiche la config
+# Vérifier que les templates utilisateur sont découverts
+mkdir -p .pi/prompts
+echo '---
+description: Test
+---
+Test' > .pi/prompts/test.md
+pi   # taper /test doit apparaître dans l'autocomplétion
+
+# Vérifier le model routing explicatif
+pi   # /weave-config → affiche "explore: model=anthropic/claude-haiku-4-5"
 ```
 
 ---
@@ -461,15 +632,50 @@ disabled_hooks     // Plus de hooks
 ### Ce qui est conservé
 
 ```typescript
-// Conservé — profils de session
+// Conservé — profils de session et routing par template
 agents: {
   "*": {
     model?: string        // Modèle par défaut
     temperature?: number  // Température
+  },
+  "scout": {
+    model?: string        // Modèle spécifique pour l'agent scout
+  },
+  "worker": {
+    model?: string
+  },
+  "reviewer": {
+    model?: string
+  }
+}
+templates: {
+  "explore": {
+    model?: string        // Modèle pour /explore (défaut: haiku)
+    tools?: string[]      // Outils autorisés (défaut: [read,bash,grep,find,ls])
+  },
+  "plan": {
+    model?: string        // Modèle pour /plan (défaut: sonnet)
+  },
+  "execute": {
+    model?: string        // Modèle pour /execute (défaut: sonnet)
+  },
+  "review": {
+    model?: string        // Modèle pour /review (défaut: sonnet)
+  },
+  "security": {
+    model?: string        // Modèle pour /security (défaut: sonnet)
+  },
+  "research": {
+    model?: string        // Modèle pour /research (défaut: sonnet)
+  },
+  "*": {
+    model?: string        // Modèle pour tout template non listé
+    tools?: string[]      // Outils pour tout template non listé
   }
 }
 disabled_tools?: string[]        // Outils globaux désactivés
 plan_tracking?: boolean          // Activer/désactiver le checkbox tracking
+custom_template_dirs?: string[]  // Répertoires de templates utilisateur
 ```
 
 ### Exemple de config simplifiée
@@ -479,6 +685,18 @@ plan_tracking?: boolean          // Activer/désactiver le checkbox tracking
 {
   // Modèle par défaut pour ce projet
   "agents": {
+    "*": { "model": "anthropic/claude-sonnet-4" },
+    "scout": { "model": "anthropic/claude-haiku-4-5" }
+  },
+
+  // Modèle et outils par template
+  "templates": {
+    "explore": { "model": "anthropic/claude-haiku-4-5", "tools": ["read","bash","grep","find","ls"] },
+    "plan": { "model": "anthropic/claude-sonnet-4" },
+    "execute": { "model": "anthropic/claude-sonnet-4" },
+    "review": { "model": "anthropic/claude-sonnet-4" },
+    "security": { "model": "anthropic/claude-sonnet-4" },
+    "research": { "model": "anthropic/claude-sonnet-4" },
     "*": { "model": "anthropic/claude-sonnet-4" }
   },
 
@@ -486,7 +704,10 @@ plan_tracking?: boolean          // Activer/désactiver le checkbox tracking
   "disabled_tools": ["write"],
 
   // Checkbox tracking dans les plans
-  "plan_tracking": true
+  "plan_tracking": true,
+
+  // Répertoires de templates utilisateur
+  "custom_template_dirs": ["./docs/prompts", "~/.weave/prompts"]
 }
 ```
 
@@ -580,12 +801,13 @@ cp pi/agents/*.md ~/.pi/agent/agents/
 |---|---|---|
 | **A** — Prompt templates | ~1h | Aucune |
 | **B** — Extension weave-lite | ~2h | Aucune (parallèle avec A) |
+| **B2** — Modèle par template + extensibilité | ~1h | B (schema utilisé par l'extension) |
 | **C** — Agents simplifiés | ~30min | Aucune (parallèle avec A+B) |
 | **D** — Config simplifiée | ~30min | B (schema utilisé par l'extension) |
-| **E** — Documentation | ~1h | A+B+D (connaître le résultat final) |
+| **E** — Documentation | ~1h | A+B+B2+D (connaître le résultat final) |
 | **F** — Nettoyage | ~30min | Toutes les autres |
 
-**Total estimé : ~5h30**
+**Total estimé : ~6h30**
 
 ### Workflow recommandé par session PI
 
@@ -594,10 +816,11 @@ Les phases A, B et C sont indépendantes et peuvent se faire en parallèle.
 Pour un exécuteur unique, l'ordre optimal est :
 1. **Phase A** — Créer les prompts, valider avec PI
 2. **Phase B** — Écrire l'extension weave-lite, valider
-3. **Phase C** — Nettoyer les agents
-4. **Phase D** — Simplifier le config schema
-5. **Phase F** — Nettoyage final
-6. **Phase E** — Documentation (en dernier car elle décrit le résultat)
+3. **Phase B2** — Ajouter le model routing et l'extensibilité
+4. **Phase C** — Nettoyer les agents
+5. **Phase D** — Simplifier le config schema
+6. **Phase F** — Nettoyage final
+7. **Phase E** — Documentation (en dernier car elle décrit le résultat)
 
 ---
 
@@ -612,9 +835,25 @@ Pour un exécuteur unique, l'ordre optimal est :
 - [ ] `/review staged` → revue de code sur `git diff --cached`
 - [ ] `/security "api/routes"` → audit sécurité ciblé
 - [ ] `/research "OAuth 2.0 PKCE"` → synthèse structurée
-- [ ] `/weave-config` → affiche la config
+- [ ] `/weave-config` → affiche la config avec mapping templates + agents
 - [ ] L'extension charge sans erreur
 - [ ] Le package s'installe via `pi install ./pi`
+
+### Checklist model routing
+
+- [ ] `/weave-config` affiche le modèle configuré pour chaque template
+- [ ] Un template utilisateur dans `.pi/prompts/` est découvert automatiquement
+- [ ] Un template utilisateur dans un custom dir est découvert via config
+- [ ] Les 3 agents ont le bon modèle dans leur frontmatter
+- [ ] Les overrides `agents.*.model` s'appliquent
+- [ ] Le wildcard `templates."*"` s'applique aux templates non listés
+
+### Checklist extensibilité
+
+- [ ] Un utilisateur peut ajouter un template dans `.pi/prompts/` et il apparaît dans l'autocomplétion
+- [ ] Un utilisateur peut ajouter un template dans un custom dir configuré et il apparaît
+- [ ] La doc explique le format attendu des templates Weave-aware
+- [ ] Le système fonctionne avec 0 config (tous les défauts sont sains)
 
 ### Checklist de suppression
 
